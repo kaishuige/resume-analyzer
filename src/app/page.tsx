@@ -1,103 +1,360 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { ThinkingSteps } from '@/components/thinking-steps';
+import { AnalysisResults } from '@/components/analysis-results';
+import { ResumeAnalyzer, ResumeAnalysisResult } from '@/lib/resume-analyzer';
+import { ThinkingStep, SequentialThinkingContext } from '@/lib/sequential-thinking';
+import { Upload, FileCheck, AlertCircle, X, Sparkles } from 'lucide-react';
+
+interface FileInfo {
+  name: string;
+  size: string;
+  pages?: number;
+  title?: string;
+  author?: string;
+  creator?: string;
+}
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [resumeText, setResumeText] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [analysisResult, setAnalysisResult] = useState<ResumeAnalysisResult | null>(null);
+  const [uploadedFileInfo, setUploadedFileInfo] = useState<FileInfo | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // Handle PDF file upload via API
+  const handleFileUpload = async (file: File) => {
+    if (!file) return;
+
+    console.log('Starting file upload:', file.name, file.size, file.type);
+
+    // Reset previous state
+    setUploadError(null);
+    setUploadedFileInfo(null);
+    setResumeText('');
+    setIsUploading(true);
+
+    try {
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', file);
+
+      console.log('Uploading to API...');
+
+      // Upload to API
+      const response = await fetch('/api/upload-resume', {
+        method: 'POST',
+        body: formData,
+      });
+
+      console.log('Response status:', response.status, response.statusText);
+
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      console.log('Response content-type:', contentType);
+
+      if (!contentType?.includes('application/json')) {
+        const text = await response.text();
+        console.error('Non-JSON response:', text);
+        throw new Error('Server returned an invalid response. Please check if the server is running correctly.');
+      }
+
+      const result = await response.json();
+      console.log('API response:', result);
+
+      if (!response.ok) {
+        throw new Error(result.error || result.details || 'Upload failed');
+      }
+
+      // Set extracted text and file info
+      setResumeText(result.text);
+      setUploadedFileInfo(result.fileInfo);
+      setUploadError(null);
+      
+      console.log('Upload successful, text length:', result.text?.length);
+    } catch (error) {
+      console.error('Upload error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Upload failed';
+      setUploadError(errorMessage);
+      setUploadedFileInfo(null);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Handle file input change
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      handleFileUpload(file);
+    }
+  };
+
+  // Handle drag and drop
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type === 'application/pdf') {
+      handleFileUpload(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+  };
+
+  // Remove uploaded file and all related analysis data
+  const handleRemoveFile = () => {
+    setUploadedFileInfo(null);
+    setResumeText('');
+    setUploadError(null);
+    // Clear all analysis related states
+    setAnalysisResult(null);
+    setThinkingSteps([]);
+    setCurrentStepIndex(0);
+    setIsAnalyzing(false);
+    
+    // Reset file input
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+  };
+
+  // Handle resume analysis
+  const handleAnalyze = async () => {
+    if (!resumeText.trim()) {
+      alert('Please upload a PDF resume first');
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysisResult(null);
+    setThinkingSteps([]);
+    setCurrentStepIndex(0);
+
+    // Create analyzer instance with step update callback
+    const analyzer = new ResumeAnalyzer(
+      undefined,
+      (step: ThinkingStep, context: SequentialThinkingContext) => {
+        setThinkingSteps([...context.steps]);
+        setCurrentStepIndex(context.currentStepIndex);
+      }
+    );
+
+    try {
+      const result = await analyzer.analyzeResume(resumeText);
+      setAnalysisResult(result);
+    } catch (error) {
+      console.error('Analysis error:', error);
+      alert('Analysis failed. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      <div className="max-w-4xl mx-auto p-6">
+        {/* Header */}
+        <div className="text-center mb-16">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-6">
+            <Sparkles className="w-4 h-4" />
+            AI-Powered Resume Analysis
+          </div>
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">Generation DINQ Card</h1>
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto leading-relaxed">
+            Transform your resume into a powerful professional profile with intelligent AI analysis and insights
+          </p>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {/* Main Content */}
+        <div className="space-y-8">
+          {/* Show upload section only when no analysis result */}
+          {!analysisResult && (
+            <>
+              {/* Upload Section */}
+              {!uploadedFileInfo ? (
+                <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+                  <CardContent className="p-8">
+                    <div className="text-center mb-8">
+                      <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                        Upload your recent resume or CV
+                      </h2>
+                      <p className="text-gray-500">
+                        Upload your most up-to-date resume<br />
+                        File types: DOC, DOCX, PDF, TXT
+                      </p>
+                    </div>
+                    
+                    <div 
+                      className={`relative border-2 border-dashed rounded-2xl p-12 transition-all duration-300 ${
+                        dragActive 
+                          ? 'border-blue-400 bg-blue-50' 
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                      onDrop={handleDrop}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                    >
+                      <div className="text-center">
+                        <div className="w-20 h-20 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                          <Upload className="w-10 h-10 text-gray-400" />
+                        </div>
+                        
+                        <div className="mb-8">
+                          <label className="inline-flex items-center px-8 py-4 bg-gray-600 hover:bg-gray-700 text-white rounded-xl cursor-pointer transition-colors font-medium">
+                            <Upload className="w-5 h-5 mr-2" />
+                            Upload
+                            <input
+                              type="file"
+                              accept=".pdf,.doc,.docx,.txt"
+                              onChange={handleFileInputChange}
+                              className="hidden"
+                              disabled={isUploading}
+                            />
+                          </label>
+                        </div>
+                        
+                        <p className="text-sm text-gray-400">
+                          or drag and drop your file here
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Upload status */}
+                    {isUploading && (
+                      <div className="flex items-center justify-center gap-3 mt-8 p-4 bg-blue-50 rounded-xl">
+                        <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-blue-700 font-medium">Processing your file...</span>
+                      </div>
+                    )}
+
+                    {/* Upload error */}
+                    {uploadError && (
+                      <div className="flex items-start gap-3 mt-8 p-4 bg-red-50 rounded-xl border border-red-100">
+                        <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                        <div>
+                          <p className="text-red-700 font-medium">Upload failed</p>
+                          <p className="text-sm text-red-600 mt-1">{uploadError}</p>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                /* File Uploaded State */
+                <Card className="border-0 shadow-xl bg-white/80 backdrop-blur-sm">
+                  <CardContent className="p-8">
+                    <div className="text-center mb-8">
+                      <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                        Upload your recent resume or CV
+                      </h2>
+                      <p className="text-gray-500">
+                        Upload your most up-to-date resume<br />
+                        File types: DOC, DOCX, PDF, TXT
+                      </p>
+                    </div>
+                    
+                    <div className="bg-gray-50 rounded-2xl p-6 mb-8">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                            <FileCheck className="w-6 h-6 text-blue-600" />
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-gray-900">{uploadedFileInfo.name}</h3>
+                            <p className="text-sm text-gray-500">
+                              {uploadedFileInfo.size} • {uploadedFileInfo.pages} pages
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleRemoveFile}
+                          className="text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                        >
+                          <X className="w-5 h-5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Generation Profile button */}
+                    <Button
+                      onClick={handleAnalyze}
+                      disabled={isAnalyzing}
+                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all duration-200"
+                      size="lg"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                          Generating Profile...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-5 h-5 mr-3" />
+                          Generation Profile
+                        </>
+                      )}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Analysis Process */}
+              {thinkingSteps.length > 0 && (
+                <div className="bg-white/60 backdrop-blur-sm rounded-2xl border border-white/20 shadow-lg">
+                  <ThinkingSteps
+                    steps={thinkingSteps}
+                    currentStepIndex={currentStepIndex}
+                    isProcessing={isAnalyzing}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Analysis Results - Full screen when available */}
+          {analysisResult && (
+            <div className="space-y-6">
+              {/* Header with back button */}
+              <div className="flex items-center justify-between p-6 bg-white/80 backdrop-blur-sm rounded-2xl border border-white/20 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+                  <span className="text-lg font-semibold text-green-700">Analysis Complete</span>
+                  <span className="text-sm text-gray-500">- Professional profile generated</span>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleRemoveFile}
+                  className="text-gray-600 hover:text-gray-900 border-gray-200 hover:border-gray-300 rounded-lg"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  Analyze Another Resume
+                </Button>
+              </div>
+              
+              <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-white/20 shadow-lg overflow-hidden">
+                <AnalysisResults result={analysisResult} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
